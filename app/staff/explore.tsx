@@ -1,15 +1,27 @@
+import Constants from 'expo-constants';
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 
-const PC_IP = "192.168.60.220";
+// const PC_IP = "192.168.60.220";
 
-const API_BASE = Platform.select({
-  web: "http://127.0.0.1:3000",     
-  ios: `http://${PC_IP}:3000`,      
-  android: `http://${PC_IP}:3000`,   
-  default: `http://${PC_IP}:3000`,
-});
+// const API_BASE = Platform.select({
+//   web: "http://127.0.0.1:3000",     
+//   ios: `http://${PC_IP}:3000`,      
+//   android: `http://${PC_IP}:3000`,   
+//   default: `http://${PC_IP}:3000`,
+// });
+
+function getNativeApiBase() {
+  const anyConst: any = Constants;
+  const expoConfig = anyConst.expoConfig || anyConst.manifest || {};
+  const hostUri: string = expoConfig.hostUri || expoConfig.debuggerHost || "";
+  const host = hostUri.split(":")[0] || "127.0.0.1";
+  return `http://${host}:3000`;
+}
+
+const API_BASE =
+  Platform.OS === "web" ? "http://127.0.0.1:3000" : getNativeApiBase();
 
 
 const DEFAULT_LINE = "Aライン"

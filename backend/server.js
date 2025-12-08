@@ -359,7 +359,8 @@ app.post("/staff/lines/:line/planned-finish", async (req,res) => {
 
 
 app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
-  try {
+  try 
+  {
     const delta = Number(req.body?.delta || 0);
     const product = req.body?.product ? String(req.body.product) : null;
     const now = new Date();
@@ -403,14 +404,16 @@ app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
       const plannedStart = buildDateTime(t.生産開始日, t.予定開始時刻);
       const plannedEnd = buildDateTime(t.生産終了日, t.予定終了時刻);
 
-      if (t.終了時刻) {
+      if (t.終了時刻) 
+      {
         const err = new Error("finished");
         err.status = 409;
         err.payload = { message: "finished" };
         throw err;
       }
 
-      if (t.更新回避) {
+      if (t.更新回避) 
+      {
         const err = new Error("paused");
         err.status = 409;
         err.payload = { message: "paused" };
@@ -420,7 +423,8 @@ app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
       const total = t.合計数 || 0;
       const currentProduced = t.生産数 || 0;
 
-      if (delta > 0 && currentProduced >= total) {
+      if (delta > 0 && currentProduced >= total) 
+      {
         const err = new Error("finished");
         err.status = 409;
         err.payload = { message: "finished" };
@@ -478,7 +482,8 @@ app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
 
     if (historyPayload) 
     {
-      try {
+      try 
+      {
         await db.query(
           `INSERT INTO カウント履歴
              (タスクID, ライン名, 通過時刻, 予定通過時刻, 生産数, 残数, イベント種別, 差分)
@@ -494,7 +499,9 @@ app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
             historyPayload.delta
           ]
         );
-      } catch (err) {
+      } 
+      catch (err) 
+      {
         console.error("Insert カウント履歴 failed:", err);
       }
     }
@@ -512,7 +519,8 @@ app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
 
 
 app.post("/staff/lines/:line/actions/:type", async (req, res, next) => {
-  try {
+  try 
+  {
     const type = req.params.type;
     const now = new Date();
     const col =
@@ -667,7 +675,8 @@ app.get("/staff/lines/:line/counter-history", async (req, res, next) => {
 });
 
 app.post('/auto_count', async (req, res) => {
-  try {
+  try 
+  {
     const { line, delta } = req.body;
     if (!line || !delta) return res.status(400).json({message: 'Invalid payload'});
 
@@ -699,7 +708,9 @@ app.post('/auto_count', async (req, res) => {
 });
 
 
-// Implement the hours (予定通過時刻, 終了見込み時刻) calculate algorithm
+// The code below implement the hours (予定通過時刻, 終了見込み時刻) calculate algorithm
+
+// Pull Date and Time information from database and preprocess for calculate
 function toDateTime(value, baseDate) 
 {
   if (!value) return null;
@@ -733,13 +744,15 @@ function toDateTime(value, baseDate)
   return null;
 }
 
-
+// Calculate minute beetween time
 function diffMinutes(start, end) 
 {
 
   return (end.getTime() - start.getTime()) / 60000;
 }
 
+
+// Real working time 
 function workingMinutesBetween(startInput, endInput, extraBreakMinutes) 
 {
   const start = toDateTime(startInput);
@@ -768,7 +781,9 @@ function addMinutes(dateInput, minutes)
 //   return addMinutes(startInput, minutesInput);
 // }
 
-function buildDateTime(dateValue, timeValue) {
+// Add Date information to Time for calculate
+function buildDateTime(dateValue, timeValue) 
+{
   const d = toDateTime(dateValue);
   if (!d && !timeValue) return null;
   if (!d) return toDateTime(timeValue);
@@ -781,7 +796,8 @@ function buildDateTime(dateValue, timeValue) {
 }
 
 
-function computeProductionTimes(params) {
+function computeProductionTimes(params) 
+{
   const start = toDateTime(params.plannedStart);
   const end = toDateTime(params.plannedEnd, start);
   const totalCount = Number(params.totalCount || 0);
@@ -794,13 +810,12 @@ function computeProductionTimes(params) {
   const breakTotal = breakMinutes + extraBreakMinutes;
 
   let netPlannedMinutes = 0;
-  if (start && end && end > start) {
-    netPlannedMinutes = workingMinutesBetween(start, end, breakTotal);
-  }
+  if (start && end && end > start) netPlannedMinutes = workingMinutesBetween(start, end, breakTotal);
 
   let minutesPerSetPlan = null;
   let minutesPerTenSetsPlan = null;
-  if (netPlannedMinutes > 0 && totalCount > 0) {
+  if (netPlannedMinutes > 0 && totalCount > 0) 
+  {
     const setsPerMinute = totalCount / netPlannedMinutes;
     minutesPerSetPlan = setsPerMinute;
     minutesPerTenSetsPlan = setsPerMinute > 0 ? 10 / setsPerMinute : null;
@@ -808,10 +823,11 @@ function computeProductionTimes(params) {
 
 
   let plannedPassAt = null;
-  if (start && netPlannedMinutes > 0 && totalCount > 0) {
-    if (producedCount <= 0) {
-      plannedPassAt = start;
-    } else {
+  if (start && netPlannedMinutes > 0 && totalCount > 0) 
+  {
+    if (producedCount <= 0) plannedPassAt = start;
+    else 
+    {
       let ratio = producedCount / totalCount;
       if (ratio > 1) ratio = 1;
       const targetMinutes = netPlannedMinutes * ratio;
@@ -821,12 +837,13 @@ function computeProductionTimes(params) {
 
 
   let expectedFinishAt = null;
-  if (end && plannedPassAt && producedCount > 0) {
+  if (end && plannedPassAt && producedCount > 0) 
+  {
     const delayMs = now.getTime() - plannedPassAt.getTime();
     expectedFinishAt = new Date(end.getTime() + delayMs);
-  } else if (end) {
-    expectedFinishAt = end;
-  }
+  } 
+  else if (end) expectedFinishAt = end;
+
 
   return {
     plannedPassAt,

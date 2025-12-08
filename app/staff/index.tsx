@@ -1,4 +1,5 @@
 import { useAuth } from '@/providers/AuthProvider'
+import Constants from 'expo-constants'
 import { useRouter } from 'expo-router'
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Image, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextStyle, useWindowDimensions, View } from "react-native"
@@ -6,14 +7,26 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 
 const logo = require("../../assets/images/logo.png")
 
-const PC_IP = "192.168.60.220";
+// const PC_IP = "192.168.60.220";
 
-const API_BASE = Platform.select({
-  web: `http://127.0.0.1:3000`,     
-  ios: `http://${PC_IP}:3000`,       
-  android: `http://${PC_IP}:3000`,   
-  default: `http://${PC_IP}:3000`,
-});
+// const API_BASE = Platform.select({
+//   web: `http://127.0.0.1:3000`,     
+//   ios: `http://${PC_IP}:3000`,       
+//   android: `http://${PC_IP}:3000`,   
+//   default: `http://${PC_IP}:3000`,
+// });
+
+function getNativeApiBase() {
+  const anyConst: any = Constants;
+  const expoConfig = anyConst.expoConfig || anyConst.manifest || {};
+  const hostUri: string = expoConfig.hostUri || expoConfig.debuggerHost || "";
+  const host = hostUri.split(":")[0] || "127.0.0.1";
+  return `http://${host}:3000`;
+}
+
+const API_BASE =
+  Platform.OS === "web" ? "http://127.0.0.1:3000" : getNativeApiBase();
+
 
 const LINES = ['Aライン', 'Bライン', 'Cライン', 'Dライン', 'Eライン', 'Fライン'];
 
@@ -73,7 +86,8 @@ function ActionLine({ label, color, onPress, ts, note, disabled }: {label: strin
   );
 }
 
-export default function StaffScreen() {
+export default function StaffScreen() 
+{
   type ActionTime =
   {
     start?: string;
