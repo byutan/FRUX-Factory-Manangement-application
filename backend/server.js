@@ -83,7 +83,8 @@ app.get('/api/lines', async (req, res) => {
 
     const results = [];
 
-    for (const ln of tables) {
+    for (const ln of tables) 
+    {
       const [activeRows] = await db.query(`
         SELECT
           商品名 AS product,
@@ -222,6 +223,69 @@ app.get('/api/lines', async (req, res) => {
         total: row.total ?? 0,
         productionCount: row.productionCount ?? 0,
         autoCount: row.autoCount ?? 0
+      });
+    }
+
+    const packLines = ["G", "H", "I"];
+
+    for (const id of packLines) {
+      const [activePack] = await db.query(
+        `
+        SELECT
+          商品名,
+          合計数,
+          梱包数
+        FROM 梱包ライン生産データ
+        WHERE ライン名 = ? AND 梱包数 < 合計数
+        ORDER BY 更新時刻 DESC, 梱包ID DESC
+        LIMIT 1;
+        `,
+        [id]
+      );
+
+      let prow = null;
+
+      if (activePack.length > 0) {
+        prow = activePack[0];
+      } else {
+        const [latestPack] = await db.query(
+          `
+          SELECT
+            商品名,
+            合計数,
+            梱包数
+          FROM 梱包ライン生産データ
+          WHERE ライン名 = ?
+          ORDER BY 更新時刻 DESC, 梱包ID DESC
+          LIMIT 1;
+          `,
+          [id]
+        );
+
+        if (latestPack.length === 0) {
+          results.push({
+            lineId: id,
+            product: null,
+            plannedEnd: null,
+            etaEnd: null,
+            total: 0,
+            productionCount: 0,
+            autoCount: 0
+          });
+          continue;
+        }
+
+        prow = latestPack[0];
+      }
+
+      results.push({
+        lineId: id,
+        product: prow.商品名,
+        plannedEnd: null,
+        etaEnd: null,
+        total: prow.合計数 ?? 0,
+        productionCount: prow.梱包数 ?? 0,
+        autoCount: 0
       });
     }
 
@@ -704,6 +768,169 @@ app.post('/auto_count', async (req, res) => {
   {
     console.error(err);
     return res.status(500).json({message: 'server error'});
+  }
+});
+
+// For package process
+const PACKAGE_TABLE = "梱包ライン生産データ";
+
+function mapPackageLine(uiLine) 
+{
+  if (!uiLine) return null;
+  const c = uiLine.trim().charAt(0);
+  if (c === "G" || c === "H" || c === "I") return c;
+  return null;
+}
+
+app.get("/package/tasks", async (req, res) => {
+  try {
+    const uiLine = req.query.line ? String(req.query.line) : "";
+    const dbLine = mapPackageLine(uiLine);
+    if (!dbLine) {
+      return res.status(400).json({ message: "invalid line" });
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        梱包ID AS id,
+        ライン名,
+        クール,
+        商品名,
+        合計数,
+        梱包数,
+        残数,
+        カウント単位
+      FROM ${PACKAGE_TABLE}
+      WHERE ライン名 = ?
+      ORDER BY クール`,
+      [dbLine]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("package/tasks error:", err);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
+app.post("/package/count", async (req, res) => {
+  const taskId = req.body?.taskId;
+  if (!taskId) {
+    return res.status(400).json({ message: "taskId is required" });
+  }
+
+  try {
+    const result = await withTx(async (conn) => {
+      const [rows] = await conn.query(
+        `
+        SELECT
+          合計数,
+          梱包数,
+          カウント単位
+        FROM ${PACKAGE_TABLE}
+        WHERE 梱包ID = ?
+        FOR UPDATE
+        `,
+        [taskId]
+      );
+
+      if (!rows.length) {
+        const err = new Error("not found");
+        err.status = 404;
+        err.payload = { message: "not found" };
+        throw err;
+      }
+
+      const t = rows[0];
+      const total = Number(t.合計数 || 0);
+      const current = Number(t.梱包数 || 0);
+      const step = Number(t.カウント単位 || 0);
+
+      if (total <= 0 || step <= 0) {
+        const err = new Error("invalid");
+        err.status = 400;
+        err.payload = { message: "invalid total or step" };
+        throw err;
+      }
+
+      if (current >= total) {
+        return { producedCount: current, total, done: true };
+      }
+
+      let next = current + step;
+      if (next > total) next = total;
+
+      await conn.query(
+        `
+        UPDATE ${PACKAGE_TABLE}
+        SET 梱包数 = ?
+        WHERE 梱包ID = ?
+        `,
+        [next, taskId]
+      );
+
+      return { producedCount: next, total, done: next >= total };
+    });
+
+    res.json({
+      producedCount: result.producedCount,
+      done: result.done,
+      message: result.done ? "完了しました" : "カウントしました",
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json(err.payload);
+    }
+    console.error("package/count error:", err);
+    res.status(500).json({ message: "server error" });
+  }
+});
+
+app.post("/package/reset", async (req, res) => {
+  const taskId = req.body && req.body.taskId;
+  if (!taskId) {
+    return res.status(400).json({ message: "taskId is required" });
+  }
+
+  try {
+    const result = await withTx(async (conn) => {
+      const [rows] = await conn.query(
+        `
+        SELECT 合計数
+        FROM ${PACKAGE_TABLE}
+        WHERE 梱包ID = ?
+        FOR UPDATE
+        `,
+        [taskId]
+      );
+
+      if (!rows.length) {
+        const e = new Error("not found");
+        e.status = 404;
+        e.payload = { message: "not found" };
+        throw e;
+      }
+
+      await conn.query(
+        `UPDATE ${PACKAGE_TABLE} SET 梱包数 = 0 WHERE 梱包ID = ?`,
+        [taskId]
+      );
+
+      return { producedCount: 0, done: false };
+    });
+
+    res.json({
+      producedCount: result.producedCount,
+      done: result.done,
+      message: "リセットしました",
+    });
+  } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json(err.payload);
+    }
+    console.error("package/reset error:", err);
+    res.status(500).json({ message: "server error" });
   }
 });
 

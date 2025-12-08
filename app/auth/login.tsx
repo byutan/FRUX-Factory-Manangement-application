@@ -15,6 +15,8 @@ export default function Login() {
     await signInAsStaff();
   };
 
+  const startPackage = () => router.push('../package');
+
   return (
     <View style={styles.screen}>
 
@@ -35,6 +37,10 @@ export default function Login() {
         <View style={styles.centerCol}>
           <Pressable onPress={startStaff} style={[styles.primaryBtn, styles.wideBtn]}>
             <Text style={styles.primaryTxt}>スタート</Text>
+          </Pressable>
+
+          <Pressable onPress={startPackage} style={[styles.primaryBtn, styles.wideBtn]}>
+            <Text style={styles.primaryTxt}>梱包</Text>
           </Pressable>
         </View>
       </View>
@@ -91,10 +97,11 @@ const styles = StyleSheet.create({
   },
   centerCol: {
     flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 14,
+    gap: 40,
   },
   lineTitle: { fontSize: 50, fontWeight: '700', marginBottom: 4 },
-  wideBtn: { minWidth: 140 },
+  wideBtn: { minWidth: 180 },
 });

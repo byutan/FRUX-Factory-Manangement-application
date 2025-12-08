@@ -1,7 +1,7 @@
 import { useAuth } from '@/providers/AuthProvider';
 import Constants from 'expo-constants';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 
 // const PC_IP = "192.168.60.220";
@@ -44,7 +44,11 @@ const initLines: Line[] = [
   { id: 'D', title: 'Dライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
   { id: 'E', title: 'Eライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
   { id: 'F', title: 'Fライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
+  { id: 'G', title: 'Gライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
+  { id: 'H', title: 'Hライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
+  { id: 'I', title: 'Iライン', product: '', plannedEnd: null, etaEnd: null, target: 0, manualCount: 0, autoCount: 0 },
 ]
+
 
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -222,7 +226,7 @@ function LineCard({ line, onChange }: { line: Line; onChange: (next: Line) => vo
               <Text style={styles.countHint}>トップカウント(手動)</Text>
               <TextInput
                 value={String(manualCount)}
-                editable={false}  // <-- chỉ đọc
+                editable={false}  
                 style={[styles.inputGreen, styles.countInput]}
               />
             </View>
@@ -230,7 +234,7 @@ function LineCard({ line, onChange }: { line: Line; onChange: (next: Line) => vo
               <Text style={styles.countHint}>エンドカウント(自動)</Text>
               <TextInput
                 value={String(autoCount)}
-                editable={false}  // <-- chỉ đọc
+                editable={false}  
                 style={[styles.inputGreen, styles.countInput]}
               />
             </View>
@@ -301,11 +305,13 @@ export default function AdminDashboard() {
         </View>
       </View>
 
+    <ScrollView contentContainerStyle={styles.scrollContent}>
       <View style={styles.grid}>
-      {lines.map((ln, i) => (
-  <LineCard key={ln.id} line={ln} onChange={(n) => update(i, n)} />
-))}
+        {lines.map((ln, i) => (
+          <LineCard key={ln.id} line={ln} onChange={(n) => update(i, n)} />
+        ))}
       </View>
+    </ScrollView>
     </View>
   )
 }
@@ -354,4 +360,5 @@ const styles = StyleSheet.create({
 
   logoutText: { color: '#fff', fontWeight: '700' },
   logoutBtn: { paddingHorizontal: 16, paddingVertical: 8, marginLeft: 'auto', backgroundColor: '#147d37', borderRadius: 999 },
+  scrollContent: { paddingVertical: 8 },
 })
