@@ -69,6 +69,7 @@ class CameraWorker(threading.Thread):
         self.stop_event = stop_event
         self.frame_queue = frame_queue
         self.roi_masks = None
+        
         self.prev_gray = None
 
     def run(self):
