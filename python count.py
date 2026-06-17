@@ -74,7 +74,7 @@ class CameraWorker(threading.Thread):
     def run(self):
         cap = cv2.VideoCapture(self.camera_id)
         if not cap.isOpened():
-            print(f"Can't Open Camera {self.camera_id} ({self.camera_name}). Đã bỏ qua luồng này.")
+            print(f"Can't Open Camera {self.camera_id} ({self.camera_name}). pass.")
             return
 
         print(f"Opening Camera {self.camera_name} (ID: {self.camera_id})")
