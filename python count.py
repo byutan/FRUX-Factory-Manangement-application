@@ -68,6 +68,8 @@ class CameraWorker(threading.Thread):
         self.object_bounding_rects = object_bounding_rects
         self.stop_event = stop_event
         self.frame_queue = frame_queue
+        self.roi_masks = None
+        self.prev_gray = None
 
     def run(self):
         cap = cv2.VideoCapture(self.camera_id)
@@ -105,41 +107,61 @@ class CameraWorker(threading.Thread):
                 frame_gray = cv2.cvtColor(frame_blur, cv2.COLOR_BGR2GRAY)
 
                 if config['object_detection']:
-                    for ind, park in enumerate(self.object_area_data):
-                        rect = self.object_bounding_rects[ind]
-                        roi_gray = frame_gray[rect[1]:(rect[1] + rect[3]), rect[0]:(rect[0] + rect[2])]
+                    if self.roi_masks is None:
+                        self.roi_masks = []
+                        for park in self.object_area_data:
+                            rect = cv2.boundingRect(np.array(park['points'], dtype=np.int32))
+                            mask = np.zeros((rect[3], rect[2]), dtype=np.uint8)
+                            pts = np.array(park['points'], dtype=np.int32) - [rect[0], rect[1]]
+                            cv2.fillPoly(mask, [pts], 255)
+                            self.roi_masks.append(mask)
 
-                        if roi_gray.size > 0:
-                            status = np.std(roi_gray) < 20 and np.mean(roi_gray) > 56
-                        else:
-                            status = object_status[ind]
+                    if self.prev_gray is not None:
+                        for ind, park in enumerate(self.object_area_data):
+                            rect = self.object_bounding_rects[ind]
+                            x, y, w, h = rect
+                            roi_gray = frame_gray[y:y+h, x:x+w]
+                            prev_roi_gray = self.prev_gray[y:y+h, x:x+w]
+                            mask = self.roi_masks[ind]
 
-                        if status != object_status[ind]:
-                            if object_buffer[ind] is None:
-                                object_buffer[ind] = video_cur_pos
-                            elif video_cur_pos - object_buffer[ind] > config['park_sec_to_wait']:
-                                if status is False:
-                                    total_output_cam += 1
+                            if roi_gray.shape[:2] != mask.shape:
+                                status = object_status[ind]
+                            else:
+                                diff = cv2.absdiff(roi_gray, prev_roi_gray)
+                                diff = cv2.bitwise_and(diff, diff, mask=mask)
+                                _, motion_mask = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+                                motion_pixels = cv2.countNonZero(motion_mask)
+                                area_pixels = max(1, cv2.countNonZero(mask))
+                                status = motion_pixels > max(10, int(area_pixels * 0.02))
 
-                                    current_time = datetime.now()
-                                    diff = current_time - last_time_cam
-                                    ct_cam = diff.total_seconds()
-                                    ppm_cam = round(60 / ct_cam, 2) if ct_cam > 0 else 0.0
-                                    last_time_cam = current_time
+                            if status != object_status[ind]:
+                                if object_buffer[ind] is None:
+                                    object_buffer[ind] = video_cur_pos
+                                elif video_cur_pos - object_buffer[ind] > config['park_sec_to_wait']:
+                                    if object_status[ind] and status is False:
+                                        total_output_cam += 1
 
-                                    diff_total = current_time - start_time_cam
-                                    minutes = diff_total.total_seconds() / 60
-                                    ppm_average_cam = round(total_output_cam / minutes, 2) if minutes > 0 else 0.0
+                                        current_time = datetime.now()
+                                        diff = current_time - last_time_cam
+                                        ct_cam = diff.total_seconds()
+                                        ppm_cam = round(60 / ct_cam, 2) if ct_cam > 0 else 0.0
+                                        last_time_cam = current_time
 
-                                    if ppm_cam > fastest_cam:
-                                        fastest_cam = ppm_cam
+                                        diff_total = current_time - start_time_cam
+                                        minutes = diff_total.total_seconds() / 60
+                                        ppm_average_cam = round(total_output_cam / minutes, 2) if minutes > 0 else 0.0
 
-                                    print(f"[{self.camera_name}] Count* {total_output_cam}, PPM: {ppm_cam:.2f}, Avg PPM: {ppm_average_cam:.2f}")
+                                        if ppm_cam > fastest_cam:
+                                            fastest_cam = ppm_cam
 
-                                object_status[ind] = status
+                                        print(f"[{self.camera_name}] Count* {total_output_cam}, PPM: {ppm_cam:.2f}, Avg PPM: {ppm_average_cam:.2f}")
+
+                                    object_status[ind] = status
+                                    object_buffer[ind] = None
+                            elif status == object_status[ind] and object_buffer[ind] is not None:
                                 object_buffer[ind] = None
-                        elif status == object_status[ind] and object_buffer[ind] is not None:
-                            object_buffer[ind] = None
+
+                    self.prev_gray = frame_gray
 
                 if config['object_overlay']:
                     for ind, park in enumerate(self.object_area_data):
