@@ -91,3 +91,13 @@ Piplow
 pip install Pillow
 ```
 
+Lapx
+```bash
+pip install lapx
+```
+
+3. 実行 - Executing
+- If you want to input a video for tracking (for example **video.mp4**), change the path to your destination
+```bash
+self.video_path = os.path.join(dir, 'video.mp4') 
+```
