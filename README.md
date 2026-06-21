@@ -31,7 +31,7 @@
 
 1. **Pythonのバージョン確認 - Verify Python version**
 ```bash
-py -v 
+python -v 
 ```
 ```3.11.9```を確認してください。
 <br>Make sure the version is ```3.11.9```.
@@ -100,4 +100,14 @@ pip install lapx
 - If you want to input a video for tracking (for example **video.mp4**), change the path to your destination
 ```bash
 self.video_path = os.path.join(dir, 'video.mp4') 
+```
+
+- Export best.pt to openvino model
+```bash
+yolo export model=best.pt format=openvino
+```
+
+- Execute the system
+```bash
+python osechi_tracking.py
 ```
