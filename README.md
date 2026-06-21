@@ -31,7 +31,7 @@
 
 1. **Pythonのバージョン確認 - Verify Python version**
 ```bash
-python --version 
+py -v 
 ```
 ```3.11.9```を確認してください。
 <br>Make sure the version is ```3.11.9```.
