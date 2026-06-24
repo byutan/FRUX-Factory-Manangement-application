@@ -188,7 +188,7 @@ function LineCard({ line, onChange }: { line: Line; onChange: (next: Line) => vo
   value={line.product || ""}
   editable={false}
   style={{
-    width: 150,       
+    width: 270,       
     marginLeft: 8,
     backgroundColor: '#fff',
     borderRadius: 6,

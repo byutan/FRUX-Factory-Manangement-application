@@ -8,10 +8,27 @@ app.use(cors());
 app.use(express.json());
 
 // Kết nối DB
+// const db = await mysql.createPool({
+//   host: '127.0.0.1',
+//   user: 'root',
+//   password: 'FruxAdmin#2025',
+//   database: 'FRUX'
+// });
+
+// local network
+// const db = await mysql.createPool({
+//   host: '127.0.0.1',
+//   user: 'root',
+//   port: 3306,
+//   password: 'FruxAdmin#2025',
+//   database: 'FRUX'
+// });
+
+// LAN network
 const db = await mysql.createPool({
-  host: '34.97.183.142',
-  user: 'FruxAdmin',
-  password: 'Fruxadmin#2025',
+  host: '127.0.0.1',
+  user: 'root',
+  password: 'FruxAdmin#2025',
   database: 'FRUX'
 });
 
@@ -229,54 +246,34 @@ app.get('/api/lines', async (req, res) => {
     const packLines = ["G", "H", "I"];
 
     for (const id of packLines) {
-      const [activePack] = await db.query(
+      const [rowsPack] = await db.query(
         `
         SELECT
           商品名,
           合計数,
           梱包数
         FROM 梱包ライン生産データ
-        WHERE ライン名 = ? AND 梱包数 < 合計数
+        WHERE ライン名 = ?
         ORDER BY 更新時刻 DESC, 梱包ID DESC
-        LIMIT 1;
-        `,
+        LIMIT 1;`,
         [id]
       );
 
-      let prow = null;
-
-      if (activePack.length > 0) {
-        prow = activePack[0];
-      } else {
-        const [latestPack] = await db.query(
-          `
-          SELECT
-            商品名,
-            合計数,
-            梱包数
-          FROM 梱包ライン生産データ
-          WHERE ライン名 = ?
-          ORDER BY 更新時刻 DESC, 梱包ID DESC
-          LIMIT 1;
-          `,
-          [id]
-        );
-
-        if (latestPack.length === 0) {
-          results.push({
-            lineId: id,
-            product: null,
-            plannedEnd: null,
-            etaEnd: null,
-            total: 0,
-            productionCount: 0,
-            autoCount: 0
-          });
-          continue;
-        }
-
-        prow = latestPack[0];
+      if (rowsPack.length === 0)
+      {
+        results.push({
+          lineId: id,
+          product: null,
+          plannedEnd: null,
+          etaEnd: null,
+          total: 0,
+          producedCount: 0,
+          autoCount: 0
+        });
+        continue;
       }
+
+      const prow = rowsPack[0];
 
       results.push({
         lineId: id,
@@ -830,8 +827,7 @@ app.post("/package/count", async (req, res) => {
           カウント単位
         FROM ${PACKAGE_TABLE}
         WHERE 梱包ID = ?
-        FOR UPDATE
-        `,
+        FOR UPDATE`,
         [taskId]
       );
 

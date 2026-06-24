@@ -37,15 +37,19 @@ CAMERA_TABLE_MAP = {
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-fn_yaml = os.path.join(BASE_DIR, "datasets", "area.yml")
+fn_yaml = os.path.join(BASE_DIR, "data.yaml")
 
 config = {'save_video': False,
           'text_overlay': True,
           'object_overlay': True,
           'object_id_overlay': False,
           'object_detection': True,
-          'min_area_motion_contour': 60,
-          'park_sec_to_wait': 0.1,
+          'min_area_motion_contour': 200,
+          'min_area_ratio': 0.02,
+          'park_sec_to_wait': 0.25,
+          'min_gap_between_counts': 0.6,
+          'bg_diff_thresh': 25,
+          'bg_update_alpha': 0.02,
           'start_frame': 0}
 
 stop_event = threading.Event()
@@ -166,6 +170,10 @@ class CameraWorker(threading.Thread):
         self.fastest_cam = 0.0
         self.ppm_average_cam = 0.0
 
+        self.bg_rois = [None] * len(self.object_area_data)
+        self.last_count_time = [None] * len(self.object_area_data)
+        self.reset_detection = True
+
     def reset_counter(self):
         """Reset total count when object start or finish."""
         if self.total_output_cam > 0:
@@ -181,6 +189,9 @@ class CameraWorker(threading.Thread):
         self.ppm_cam = 0.0
         self.fastest_cam = 0.0
         self.ppm_average_cam = 0.0
+
+        self.last_count_time = [None] * len(self.object_area_data)
+        self.reset_detection = True
 
     def check_task_status(self):
         """check object active or not."""
@@ -221,51 +232,99 @@ class CameraWorker(threading.Thread):
         self.reset_counter()
         self.check_task_status()
 
-        object_status = [False] * len(self.object_area_data)
-        object_buffer = [None] * len(self.object_area_data)
+        n_rois = len(self.object_area_data)
+        object_status = [False] * n_rois
+        object_buffer = [None] * n_rois
+        last_count_time = [None] * n_rois
 
-        while cap.isOpened() and not self.stop_event.is_set(): 
+        prev_task_id = self.current_task_id
+
+        kernel = np.ones((3, 3), np.uint8)
+        bgs = cv2.createBackgroundSubtractorMOG2(
+            history=int(config.get("bg_history", 500)),
+            varThreshold=float(config.get("bg_var_threshold", 32)),
+            detectShadows=bool(config.get("bg_detect_shadows", False)),
+        )
+
+        while cap.isOpened() and not self.stop_event.is_set():
             try:
                 current_time_sec = time.time()
                 if current_time_sec - self.last_check_time > self.check_interval:
                     self.check_task_status()
                     self.last_check_time = current_time_sec
 
-                ret, frame = cap.read() 
-                
-                if ret is False or frame is None:
-                    time.sleep(0.1)
-                    if cap.get(cv2.CAP_PROP_FRAME_COUNT) > 0 and cap.get(cv2.CAP_PROP_POS_FRAMES) >= cap.get(cv2.CAP_PROP_FRAME_COUNT):
-                        break 
+                    if self.current_task_id != prev_task_id:
+                        object_status = [False] * n_rois
+                        object_buffer = [None] * n_rois
+                        last_count_time = [None] * n_rois
+                        prev_task_id = self.current_task_id
+
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    time.sleep(0.05)
                     continue
 
-                video_cur_pos = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 
+                video_cur_pos = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 frame_out = frame.copy()
-                
-                frame_blur = cv2.GaussianBlur(frame.copy(), (5,5), 3)
-                frame_gray = cv2.cvtColor(frame_blur, cv2.COLOR_BGR2GRAY)
 
-                if config['object_detection'] and self.current_task_id is not None: 
+                frame_h, frame_w = frame.shape[:2]
+                frame_blur = cv2.GaussianBlur(frame, (5, 5), 0)
 
-                    if not self.is_paused:
-                        for ind, park in enumerate(self.object_area_data):
-                            rect = self.object_bounding_rects[ind]
-                            roi_gray = frame_gray[rect[1]:(rect[1]+rect[3]), rect[0]:(rect[0]+rect[2])] 
-                            
-                            if roi_gray.size > 0:
-                                status = np.std(roi_gray) < 20 and np.mean(roi_gray) > 56
-                            else:
+                lr_wait = float(config.get("bg_learning_rate_wait", 0.01))
+                lr_active = float(config.get("bg_learning_rate_active", 0.002))
+                lr = lr_active if (self.current_task_id is not None and not self.is_paused) else lr_wait
+
+                fg = bgs.apply(frame_blur, learningRate=lr)
+                _, fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
+                fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel)
+                fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel)
+
+                if bool(config.get("object_detection", True)):
+                    min_area_abs = int(config.get("min_area_motion_contour", 200))
+                    min_area_ratio = float(config.get("min_area_ratio", 0.02))
+                    park_wait = float(config.get("park_sec_to_wait", 0.25))
+                    min_gap = float(config.get("min_gap_between_counts", 0.6))
+
+                    for ind in range(n_rois):
+                        x, y, w, h = self.object_bounding_rects[ind]
+                        x1 = 0 if x < 0 else x
+                        y1 = 0 if y < 0 else y
+                        x2 = frame_w if (x + w) > frame_w else (x + w)
+                        y2 = frame_h if (y + h) > frame_h else (y + h)
+
+                        if x2 <= x1 or y2 <= y1:
+                            status = object_status[ind]
+                        else:
+                            roi_fg = fg[y1:y2, x1:x2]
+                            if roi_fg.size <= 0:
                                 status = object_status[ind]
+                            else:
+                                area = cv2.countNonZero(roi_fg)
+                                roi_area = int((x2 - x1) * (y2 - y1))
+                                min_area = min_area_abs
+                                ratio_area = int(min_area_ratio * roi_area)
+                                if ratio_area > min_area:
+                                    min_area = ratio_area
+                                status = area >= min_area
 
-                            if status != object_status[ind]:
-                                if object_buffer[ind] is None: 
-                                    object_buffer[ind] = video_cur_pos
-                                elif video_cur_pos - object_buffer[ind] > config['park_sec_to_wait']:
-                                    if status == False:
+                        if status != object_status[ind]:
+                            if object_buffer[ind] is None:
+                                object_buffer[ind] = video_cur_pos
+                            elif (video_cur_pos - object_buffer[ind]) > park_wait:
+                                leaving = (object_status[ind] is True) and (status is False)
+
+                                if leaving and (self.current_task_id is not None) and (not self.is_paused):
+                                    can_count = True
+                                    lt = last_count_time[ind]
+                                    if lt is not None and (video_cur_pos - lt) < min_gap:
+                                        can_count = False
+
+                                    if can_count:
                                         self.total_output_cam += 1
-                                        
+                                        last_count_time[ind] = video_cur_pos
+
                                         current_time = datetime.now()
-                                        diff = current_time - self.last_time_cam 
+                                        diff = current_time - self.last_time_cam
                                         self.ct_cam = diff.total_seconds()
                                         self.ppm_cam = round(60 / self.ct_cam, 2) if self.ct_cam > 0 else 0.0
                                         self.last_time_cam = current_time
@@ -274,51 +333,57 @@ class CameraWorker(threading.Thread):
                                         minutes = diff_total.total_seconds() / 60
                                         self.ppm_average_cam = round(self.total_output_cam / minutes, 2) if minutes > 0 else 0.0
 
-                                        if (self.ppm_cam > self.fastest_cam):
+                                        if self.ppm_cam > self.fastest_cam:
                                             self.fastest_cam = self.ppm_cam
 
-                                        print(f"[{self.camera_name}] Count* {self.total_output_cam}, PPM: {self.ppm_cam:.2f}, Avg PPM: {self.ppm_average_cam:.2f}")
+                                        print(
+                                            f"[{self.camera_name}] Count* {self.total_output_cam}, "
+                                            f"PPM: {self.ppm_cam:.2f}, Avg PPM: {self.ppm_average_cam:.2f}"
+                                        )
 
-                                        self.current_task_id, self.is_paused = log_count_to_mysql(self.camera_name, self.total_output_cam, self.ppm_cam, current_time, is_check_only=False)
+                                        self.current_task_id, self.is_paused = log_count_to_mysql(
+                                            self.camera_name, self.total_output_cam, self.ppm_cam, current_time, is_check_only=False
+                                        )
 
-                                    object_status[ind] = status
-                                    object_buffer[ind] = None 
-                            elif status == object_status[ind] and object_buffer[ind] is not None:
-                                object_buffer[ind] = None 
+                                        if self.current_task_id != prev_task_id:
+                                            object_status = [False] * n_rois
+                                            object_buffer = [None] * n_rois
+                                            last_count_time = [None] * n_rois
+                                            prev_task_id = self.current_task_id
 
-                if config['object_overlay']: 
+                                object_status[ind] = status
+                                object_buffer[ind] = None
+                        elif object_buffer[ind] is not None:
+                            object_buffer[ind] = None
+
+                if bool(config.get("object_overlay", True)):
                     for ind, park in enumerate(self.object_area_data):
-                        points = np.array(park['points'], dtype=np.int32)
-
-                        color = (0,255,0) if object_status[ind] else (0,0,255)
-
+                        points = np.array(park["points"], dtype=np.int32)
+                        color = (0, 255, 0) if object_status[ind] else (0, 0, 255)
                         if self.is_paused:
                             color = (150, 150, 150)
-                            
-                        cv2.drawContours(frame_out, [points], contourIdx=-1,color=color, thickness=2, lineType=cv2.LINE_8) 
+                        cv2.drawContours(frame_out, [points], contourIdx=-1, color=color, thickness=2, lineType=cv2.LINE_8)
 
-                        if config['object_id_overlay']:
+                        if bool(config.get("object_id_overlay", False)):
                             moments = cv2.moments(points)
-                            if moments['m00'] != 0:
-                                centroid = (int(moments['m10']/moments['m00']), int(moments['m01']/moments['m00']))
-                                cv2.putText(frame_out, str(park['id']), centroid, cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,0), 1, cv2.LINE_AA)
+                            if moments["m00"] != 0:
+                                centroid = (int(moments["m10"] / moments["m00"]), int(moments["m01"] / moments["m00"]))
+                                cv2.putText(frame_out, str(park.get("id", ind)), centroid, cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA,)
 
-                if config['text_overlay']:
-                    cv2.rectangle(frame_out, (1, 5), (350, 90),(0,255,0), 2)
-                    cv2.putText(frame_out, f"CAMERA: {self.camera_name} (ID: {self.camera_id})", (5,20), cv2.FONT_HERSHEY_SIMPLEX ,0.5, (255,0,0), 2, cv2.LINE_AA)
-                    
+                if bool(config.get("text_overlay", True)):
+                    cv2.rectangle(frame_out, (1, 5), (410, 105), (0, 255, 0), 2)
+                    cv2.putText(frame_out, f"CAMERA: {self.camera_name}", (5, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2, cv2.LINE_AA,)
+
                     if self.current_task_id is not None:
                         status_text = "STATUS: PAUSED (中断中)" if self.is_paused else "STATUS: ACTIVE"
                         status_color = (0, 255, 255) if self.is_paused else (0, 0, 255)
-                        
-                        cv2.putText(frame_out, f"{status_text}, Task ID: {self.current_task_id}", (5,40), cv2.FONT_HERSHEY_SIMPLEX ,0.5, status_color, 2, cv2.LINE_AA)
-                        
-                        cv2.putText(frame_out, f"Total Counting = {self.total_output_cam}, Speed (PPM) = {self.ppm_cam:.2f}", (5,60), cv2.FONT_HERSHEY_SIMPLEX ,0.5, (0,0,255), 2, cv2.LINE_AA)
-                        cv2.putText(frame_out, f"Fastest PPM: {self.fastest_cam:.2f}, Average: {self.ppm_average_cam:.2f}", (5,80), cv2.FONT_HERSHEY_SIMPLEX ,0.5, (255,255,0), 1, cv2.LINE_AA)
-                    else:
-                        cv2.putText(frame_out, "STATUS: WAITING FOR NEW TASK (DB CHECKING)", (5,40), cv2.FONT_HERSHEY_SIMPLEX ,0.5, (0,255,255), 2, cv2.LINE_AA)
-                        cv2.putText(frame_out, "Task will start automatically.", (5,60), cv2.FONT_HERSHEY_SIMPLEX ,0.5, (0,255,255), 1, cv2.LINE_AA)
 
+                        cv2.putText(frame_out, f"{status_text}, Task: {self.current_task_id}", (5, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2, cv2.LINE_AA,)
+                        cv2.putText(frame_out, f"Total: {self.total_output_cam}  AvgPPM: {self.ppm_average_cam:.2f}", (5, 68), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA,)
+                        cv2.putText(frame_out, f"Fastest PPM: {self.fastest_cam:.2f}", (5, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA,)
+                    else:
+                        cv2.putText(frame_out, "STATUS: WAITING TASK...", (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2, cv2.LINE_AA)
+                        cv2.putText(frame_out, "Task will start from iPad", (5, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA,)
 
                 try:
                     self.frame_queue.put((self.camera_name, frame_out), timeout=0.01)
@@ -328,11 +393,12 @@ class CameraWorker(threading.Thread):
             except Exception as e:
                 print(f"Camera Error {self.camera_name}: {e}")
                 break
-            
+
             time.sleep(0.001)
 
         cap.release()
         print(f"Camera {self.camera_name} Stopped. Final Count: {self.total_output_cam}")
+
 
 if __name__ == '__main__':
 
