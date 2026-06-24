@@ -27,7 +27,6 @@ yarn-debug.*
 yarn-error.*
 
 # macOS
-.DS_Store
 *.pem
 
 # local env files
@@ -41,3 +40,31 @@ app-example
 # generated native folders
 /ios
 /android
+
+*.mov
+*.mp4
+*.avi
+*.mkv
+
+*.pt
+*.onnx
+best_openvino_model/
+
+venv/
+env/
+.env
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+tracking_data/
+result.txt
+runs/
+*.log
+
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
