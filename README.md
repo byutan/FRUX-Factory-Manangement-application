@@ -31,7 +31,7 @@
 
 1. **Pythonのバージョン確認 - Verify Python version**
 ```bash
-py -v 
+python -v 
 ```
 ```3.11.9```を確認してください。
 <br>Make sure the version is ```3.11.9```.
@@ -71,11 +71,6 @@ CPU Pytorch
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 ```
 
-CPU Pytorch
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
-
 Ultralytics
 ```bash
 pip install ultralytics
@@ -97,7 +92,24 @@ pip install lapx
 ```
 
 3. 実行 - Executing
-- If you want to input a video for tracking (for example **video.mp4**), change the path to your destination
+- トラッキング用の動画（例: video.mp4）を入力する場合は、保存先のパスに変更してください。
+<br>If you want to input a video for tracking (for example **video.mp4**), change the path to your destination
 ```bash
 self.video_path = os.path.join(dir, 'video.mp4') 
+cap = cv2.VideoCapture(self.video_path)
 ```
+
+- best.ptをOpenVINOモデルにエクスポートします。
+<br>Export best.pt to openvino model
+```bash
+yolo export model=best.pt format=openvino
+```
+
+- システムを実行します。
+<br>Execute the system
+```bash
+python osechi_tracking.py
+```
+
+- カウントを終了するには、**q**キーを押してください。ルートフォルダに**tracking_data**フォルダが作成されます。
+<br>To end counting, press **q** and a folder **tracking_data** will appear in the root folder.
