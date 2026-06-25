@@ -117,7 +117,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 1. フォルダーパスの確認 - Verify folder path
 ```bash
-c
+..:\...\...\Osechi-Production-Management-App
 ```
 
 2. ターミナルを3つ開く - Turn on 3 terminals 
@@ -135,10 +135,10 @@ node server.js
 <br>Choose either [yolov8m](https://drive.google.com/file/d/1F90aeZWMCpvbYEHfqGl7tqWpWkg3XkSr/view?usp=sharing) or [yolov11m](https://drive.usercontent.google.com/download?id=1IM1E4bVMjMOdajFGENb0LDR2_BFNhHxl&export=download&authuser=0) **best.pt** file.
 ```bash
 cd counter
-yolo export model=best.pt format=openvino; python count.py #This creates a "best_openvino_model" folder inside "counter", skip this if already exists 
+yolo export model=best.pt format=openvino; python count.py #This creates a "best_openvino_model" folder inside "counter", skip this if already exists.
 py count.py
 ```
 
 3. [ivcam]というアプリがあるiPadを7台準備してください - Prepare 7 ipads with ivcam apps (You can adjust it inside **backend/counter/count.py**).
-4. iPadを1台使い、最初のターミナルに表示されたQRコードをスキャンしてください - Use 1 ipad and scan QR code from **first terminal**
-5. **同じネットワーク**に接続してください - Make sure to connect to the **same network**
+4. iPadを1台使い、最初のターミナルに表示されたQRコードをスキャンしてください - Use 1 ipad and scan QR code from **first terminal**.
+5. **同じネットワーク**に接続してください - Make sure to connect to the **same network**.
