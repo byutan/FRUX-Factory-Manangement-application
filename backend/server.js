@@ -7,6 +7,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const inMemoryAutoCounts = {
+  'A': 0, 'B': 0, 'C': 0, 'D': 0, 'E': 0, 'F': 0
+};
 // Kết nối DB
 // const db = await mysql.createPool({
 //   host: '127.0.0.1',
@@ -373,7 +376,10 @@ app.get("/staff/lines/:line/current", async (req, res) => {
   const produced = t.生産数 || 0;
   const remaining = typeof t.残数 === "number" ? t.残数 : Math.max(totalTarget - produced, 0);
   const progressPct = typeof t.生産進捗率 === 'number' ? t.生産進捗率 :totalTarget > 0 ? Math.floor((produced / totalTarget) * 100) : 0;
-  const autoCount = t.自動数 || 0;
+  const lineId = line.charAt(0); 
+  
+  // Ưu tiên lấy từ RAM, nếu RAM bị 0 (mới khởi động) thì lấy từ DB
+  const autoCount = inMemoryAutoCounts[lineId] || t.自動数 || 0;
 
   const plannedStartTime = formatTimeField(t.予定開始時刻);
   const plannedEndTime = formatTimeField(t.予定終了時刻);
@@ -738,28 +744,13 @@ app.get("/staff/lines/:line/counter-history", async (req, res, next) => {
 app.post('/auto_count', async (req, res) => {
   try 
   {
-    const { line, delta } = req.body;
-    if (!line || !delta) return res.status(400).json({message: 'Invalid payload'});
+    const { line, total_count } = req.body;
+    if (!line || !total_count) return res.status(400).json({message: 'Invalid payload'});
 
-    let table;
-    if (line === 'A') table = 'Aライン生産データ';
-    else if (line === 'B') table = 'Bライン生産データ';
-    else if (line === 'C') table = 'Cライン生産データ';
-    else if (line === 'D') table = 'Dライン生産データ';
-    else if (line === 'E') table = 'Eライン生産データ';
-    else if (line === 'F') table = 'Fライン生産データ';
-    else return res.status(400).json({message: 'unknow line'});
+    inMemoryAutoCounts[line] = total_count;
+    console.log(`[Realtime] Line ${line} autoCount update: ${total_count}`);
 
-    const [result] = await db.query(
-      `UPDATE ${table}
-      SET 自動数 = 自動数 + ?
-      WHERE 開始時刻 IS NOT NULL AND 終了時刻 IS NULL
-      ORDER BY 商品コード DESC
-      LIMIT 1`,
-      [delta]
-    );
-
-    return res.json({ok: true, affectedRows: result.affectedRows});
+    return res.json({ok: true, autoCount: total_count});
   } 
   catch (err)
   {

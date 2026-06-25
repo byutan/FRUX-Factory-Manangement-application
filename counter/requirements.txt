@@ -1,0 +1,7 @@
+pyyaml
+numpy
+opencv-python
+pillow
+mysql-connector-python
+ultralytics
+openvino
