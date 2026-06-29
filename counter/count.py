@@ -11,32 +11,34 @@ from ultralytics import YOLO
 from PIL import Image, ImageDraw, ImageFont
 import requests
 import multiprocessing as mp
+
+
 BACKEND_URL = 'http://127.0.0.1:3000/auto_count'
 
-MYSQL_CONFIG = {
-    'host': '34.97.183.142',
-    'port': 3306,
-    'user': 'FruxAdmin',
-    'password': 'Fruxadmin#2025',
-    'database': 'FRUX',
-}
+# MYSQL_CONFIG = {
+#     'host': '34.97.183.142',
+#     'port': 3306,
+#     'user': 'FruxAdmin',
+#     'password': 'Fruxadmin#2025',
+#     'database': 'FRUX',
+# }
 
 VIDEO_SOURCES = {
     1: "Camera A (ID 1)",
-    2: "Camera B (ID 2)",
-    3: "Camera C (ID 3)",
-    4: "Camera D (ID 4)",
-    5: "Camera E (ID 5)",
-    6: "Camera F (ID 6)",
+    # 2: "Camera B (ID 2)",
+    # 3: "Camera C (ID 3)",
+    # 4: "Camera D (ID 4)",
+    # 5: "Camera E (ID 5)",
+    # 6: "Camera F (ID 6)",
 }
 
 CAMERA_TABLE_MAP = {
     "Camera A (ID 1)": "Aライン生産データ",
-    "Camera B (ID 2)": "Bライン生産データ",
-    "Camera C (ID 3)": "Cライン生産データ",
-    "Camera D (ID 4)": "Dライン生産データ",
-    "Camera E (ID 5)": "Eライン生産データ",
-    "Camera F (ID 6)": "Fライン生産データ",
+    # "Camera B (ID 2)": "Bライン生産データ",
+    # "Camera C (ID 3)": "Cライン生産データ",
+    # "Camera D (ID 4)": "Dライン生産データ",
+    # "Camera E (ID 5)": "Eライン生産データ",
+    # "Camera F (ID 6)": "Fライン生産データ",
 }
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -161,7 +163,7 @@ class CameraWorker(threading.Thread):
     def reset_counter(self):
         """Reset total count when object start or finish."""
         if self.total_output_cam > 0:
-            print(f"[{self.camera_name}] 🔄 Task {self.current_task_id} ended. Resetting counter from {self.total_output_cam}.")
+            print(f"[{self.camera_name}] タスク{self.current_task_id} 終わった. {self.total_output_cam} からカウンターをリセット.")
         
         self.counted_ids.clear()
 
@@ -182,40 +184,47 @@ class CameraWorker(threading.Thread):
 
     def check_task_status(self):
         """check object active or not."""
-
-        active_task_id, is_paused_db = log_count_to_mysql(self.camera_name, 0, 0, datetime.now(), is_check_only=True)
-
-        if self.current_task_id is not None and active_task_id == self.current_task_id and self.is_paused != is_paused_db:
-             if is_paused_db:
-                 print(f"[{self.camera_name}] ⏸️ Task {active_task_id} is PAUSED (中断).")
-             else:
-                 print(f"[{self.camera_name}] ▶️ Task {active_task_id} is RESUMED (再開).")
-             self.is_paused = is_paused_db
-
-        elif self.current_task_id is None and active_task_id is not None:
-            print(f"[{self.camera_name}] 🟢 New task found: {active_task_id}")
-            self.reset_counter()
-            self.current_task_id = active_task_id
-            self.is_paused = is_paused_db 
+        line_char = self.camera_name.split(' ')[1]
+        try:
+            res = requests.get(f"http://127.0.0.1:3000/api/camera/status/{line_char}", timeout=1.0)
+            if res.status_code == 200:
+                data = res.json()
+                active_task_id = data.get("product")
+                is_paused_server = data.get("paused", False)
+                is_finished_server = data.get("finished", False)
             
-        elif self.current_task_id is not None and active_task_id is None:
-            print(f"[{self.camera_name}] 🛑 Current task {self.current_task_id} finished on iPad. Resetting.")
-            self.reset_counter()
-            
-        elif self.current_task_id is not None and active_task_id is not None and self.current_task_id != active_task_id:
-            print(f"[{self.camera_name}] ➡️ Task switch: {self.current_task_id} -> {active_task_id}. Resetting.")
-            self.reset_counter()
-            self.current_task_id = active_task_id
-            self.is_paused = is_paused_db 
+                if is_finished_server or active_task_id is None:
+                    if self.current_task_id is not None:
+                        print(f"[{self.camera_name}] 終了している.")
+                        self.current_task_id = None 
+                        self.is_paused = False
+                    return
+
+                if self.current_task_id is not None and active_task_id == self.current_task_id:
+                        if self.is_paused != is_paused_server:
+                            if is_paused_server:
+                                print(f"[{self.camera_name}] 中断している.")
+                            else:
+                                print(f"[{self.camera_name}] 再開している.")
+                            self.is_paused = is_paused_server
+
+                elif self.current_task_id is None and active_task_id is not None:
+                        print(f"[{self.camera_name}] 開始している.")
+                        self.reset_counter()
+                        self.current_task_id = active_task_id
+                        self.is_paused = is_paused_server
+
+        except requests.exceptions.RequestException as e:
+            pass
+        except Exception as e:
+            print(f"[{self.camera_name}] サーバーエラー: {e}")
 
     def run(self):
-        # video =  os.path.join(BASE_DIR, 'IMG_0010.mov')
         print(f"[{self.camera_name}] Loading YOLO Model...")
         self.model = YOLO(WEIGHTS_PATH, task='detect')
         self.font = ImageFont.truetype(FONT_PATH, 32) if os.path.exists(FONT_PATH) else ImageFont.load_default()
 
         cap = cv2.VideoCapture(self.source)
-        # cap = cv2.VideoCapture(video)
         if not cap.isOpened():
             print(f"Can't Open Camera {self.source} ({self.camera_name}). Passed this thread.")
             return
@@ -225,43 +234,35 @@ class CameraWorker(threading.Thread):
         self.reset_counter()
         self.check_task_status()
 
-        # Tiền xử lý khung hình (độ sáng)
         alpha = 1.5 
         beta = 20   
 
         while cap.isOpened() and not self.stop_event.is_set():
-            # 1. Định kỳ kiểm tra trạng thái Task trên Database
             current_time_sec = time.time()
             if current_time_sec - self.last_check_time > self.check_interval:
                 self.check_task_status()
                 self.last_check_time = current_time_sec
 
-            # 2. Đọc khung hình
             ret, frame = cap.read()
             if not ret:
-                # Nếu là video thì có thể break, nếu là RTSP thì sleep và continue
                 break 
 
-            # Giảm kích thước ảnh để tracking nhanh hơn
             image_scale = 1
             height, width = frame.shape[:2]
             frame = cv2.resize(frame, (round(width / image_scale), round(height / image_scale)))
             new_height, new_width = frame.shape[:2]
             
-            # Vạch đếm (Đếm khi qua 3/4 màn hình)
             mid_line_x = new_width * 3 // 4
 
             start_line_x = new_width // 4
 
             enhanced_frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
-            
-            # 3. Yolo Tracking (Chỉ Tracking khi đang có Task và không bị Pause)
+
             if self.current_task_id is not None and not self.is_paused:
                 results = self.model.track(source=enhanced_frame, persist=True, tracker=BYTETRACK_YAML_PATH, conf=0.6, iou=0.4, verbose=False)
             else:
-                results = None # Không nhận diện để tiết kiệm tài nguyên nếu đang tạm dừng
+                results = None
             
-            # 4. Xử lý Vẽ lên ảnh bằng PIL
             img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             draw = ImageDraw.Draw(img_pil)
 
@@ -271,35 +272,27 @@ class CameraWorker(threading.Thread):
                 ids = results[0].boxes.id.cpu().numpy().astype(int)
                 
                 for box, obj_id in zip(boxes, ids):
-                    # Logic đếm: Tâm của bounding box vượt qua vạch mid_line_x
                     center_x = (box[0] + box[2]) // 2
                     if center_x < start_line_x:
                         continue
                     elif center_x <= mid_line_x:
-                        # Cấp "Hộ khẩu": Ghi nhận ID này xuất phát từ bên trái hợp lệ
                         self.tracked_left_ids.add(obj_id)
                         
-                        # CHỈ VẼ Bounding Box & ID KHI ĐANG Ở BÊN TRÁI
                         draw.rectangle([box[0], box[1], box[2], box[3]], outline=(255, 0, 255), width=2)
                         draw.text((box[0], max(0, box[1] - 40)), f"ID: {obj_id}", font=self.font, fill=(255, 0, 255)) 
 
-                    # 2. HỘP ĐÃ SANG BÊN PHẢI VẠCH
                     else:
                         if obj_id not in self.counted_ids:
-                            # KIỂM TRA HỘ KHẨU: Nó có xuất phát từ bên trái không?
                             if obj_id in self.tracked_left_ids:
                                 
-                                # Kết hợp thêm Cooldown để chống nháy ID ngay sát vạch
                                 current_time = datetime.now()
                                 diff = current_time - self.last_time_cam
                                 ct_cam = diff.total_seconds()
                                 
                                 if ct_cam >= 0.5 or self.total_output_cam == 0:
-                                    # >>> ĐẾM HỢP LỆ <<<
                                     self.counted_ids.add(obj_id)
                                     self.total_output_cam += 1
                                     
-                                    # Cập nhật UI và đẩy API
                                     self.ppm_cam = round(60 / ct_cam, 2) if ct_cam > 0 and self.total_output_cam > 1 else 0.0
                                     self.last_time_cam = current_time
 
@@ -311,7 +304,6 @@ class CameraWorker(threading.Thread):
                                         self.fastest_cam = self.ppm_cam
 
                                     line_char = self.camera_name.split(' ')[1] 
-                                    # threading.Thread(target=send_count_to_backend, args=(line_char, self.total_output_cam)).start()
                                     
                                     api_thread = threading.Thread(target=send_count_to_backend, args=(line_char, self.total_output_cam), daemon=True)
                                     api_thread.start()
@@ -320,20 +312,11 @@ class CameraWorker(threading.Thread):
                                     
                                     print(f"[{self.camera_name}] Count +1 = {self.total_output_cam} | Task: {self.current_task_id}")
                                 else:
-                                    # Bị nháy ngay sát vạch -> Không đếm, chặn luôn
                                     self.counted_ids.add(obj_id)
                             else:
-                                # >>> BẮT ĐƯỢC GHOST ID <<<
-                                # ID này tự dưng xuất hiện bên phải, do nháy ID sinh ra -> Đưa vào sổ đen
                                 self.counted_ids.add(obj_id)
-                                # print(f"Chặn ID ma: {obj_id}")
                         
-                        # Hộp đã qua phải thì KHÔNG VẼ NỮA, bỏ qua vòng lặp
                         continue
-                   
-                    # # Vẽ Bounding Box & ID
-                    # draw.rectangle([box[0], box[1], box[2], box[3]], outline=(255, 0, 255), width=2)
-                    # draw.text((box[0], max(0, box[1] - 40)), f"ID: {obj_id}", font=self.font, fill=(255, 0, 255)) 
 
             # 5. Vẽ thông tin UI lên ảnh
             frame_out = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)

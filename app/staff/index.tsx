@@ -118,14 +118,21 @@ export default function StaffScreen()
                                            productName?: string | null;
                                            plannedStartTime?: string | null;
                                            plannedEndTime?: string | null;
-                                           plannedPassTime?: string | null;
+                                           plannedPassTime?: string | null;    
                                            expectedFinishTime?: string | null;
-                                           status?: string; }|null>(null);
-
+                                           status?: string;
+                                           isActive?: boolean;    
+                                           isLineBusy?: boolean; 
+                                           isPaused?: boolean;     
+                                          }|null>(null);
   const canPrep = !paused && (current?.remaining ?? 0) > 0;
   const isDone = current?.status === 'done'
   const [line, setLine] = useState<string>('Aライン');
 
+  const isActive = !!current?.isActive;         
+  const isLineBusy = !!current?.isLineBusy;     
+  const isCurrentPaused = !!current?.isPaused;
+  
   useEffect(() => {
     const fetchSections = async () => {
       try 
@@ -414,10 +421,10 @@ export default function StaffScreen()
               </View>
 
               <View style={styles.actionsCol}>
-                <ActionLine label="生産 開始"  color="green" ts={actionTime.start}  onPress={async () => { mark('start')(); const r = await action('start'); if (!r?.noop) { setPaused(false); setFinishNote(undefined); setDone(0); await loadCurrent().catch(() => {}); } }} />
-                <ActionLine label="生産 中断"  color="green" ts={actionTime.pause} disabled={isDone} onPress={async () => { mark('pause')(); const r = await action('pause'); if(r?.ok) { setPaused(true); await loadCurrent().catch(() => {}); } }} />
-                <ActionLine label="生産 再開"  color="green" ts={actionTime.resume} disabled={isDone} onPress={async () => { mark('resume')(); const r = await action('resume'); if(r?.ok) { setPaused(false); await loadCurrent().catch(() => {}); } }} />
-                <ActionLine label="生産 終了"  color="green" ts={actionTime.finish} note={finishNote} onPress={async () => { mark('finish')(); await action('finish'); setFinishNote('生産終了しました！'); setTimeout(() => setFinishNote(undefined), 3000); await loadCurrent().catch(() => {}); }} />
+                <ActionLine label="生産 開始"  color="green" ts={actionTime.start}  disabled={isLineBusy} onPress={async () => { mark('start')(); const r = await action('start'); if (!r?.noop) { setPaused(false); setFinishNote(undefined); await loadCurrent().catch(() => {}); } }} />
+                <ActionLine label="生産 中断"  color="green" ts={actionTime.pause} disabled={!isActive || isCurrentPaused} onPress={async () => { mark('pause')(); const r = await action('pause'); if(r?.ok) { setPaused(true); await loadCurrent().catch(() => {}); } }} />
+                <ActionLine label="生産 再開"  color="green" ts={actionTime.resume} disabled={!isActive || !isCurrentPaused} onPress={async () => { mark('resume')(); const r = await action('resume'); if(r?.ok) { setPaused(false); await loadCurrent().catch(() => {}); } }} />
+                <ActionLine label="生産 終了"  color="green" ts={actionTime.finish} note={finishNote} disabled={!isActive}onPress={async () => { mark('finish')(); await action('finish'); setFinishNote('生産終了しました！'); setTimeout(() => setFinishNote(undefined), 3000); await loadCurrent().catch(() => {}); }} />
                 <ActionLine label="カウンター履歴" color="green" onPress={() => router.push({pathname: '/staff/explore', params: {line, product: picked || ''} })} />
               </View>
 

@@ -97,12 +97,12 @@ function DateFieldStack({ value, onChange, readOnly = false }: { value: Date | n
     return (
       <View style={{ gap: 8 }}>
         <GreenInputWeb
-          type = "date"
-          value = {value ? ymd(value) : ''}
-          onChange = {(e: any) => {
+          type="date"
+          value={value ? ymd(value) : ''}
+          onChange={(e: any) => {
             if (readOnly) return
             const [Y, M, D] = e.target.value.split('-').map(Number)
-            const n = new Date(value)
+            const n = value ? new Date(value) : new Date()
             n.setFullYear(Y)
             n.setMonth(M - 1)
             n.setDate(D)
@@ -111,29 +111,29 @@ function DateFieldStack({ value, onChange, readOnly = false }: { value: Date | n
           readOnly={readOnly}
         />
         <GreenInputWeb
-          type = "time"
-          value = {value ? hm(value) : ''}
-          onChange = {(e: any) => {
+          type="time"
+          value={value ? hm(value) : ''}
+          onChange={(e: any) => {
             if (readOnly) return
             const [H, m] = e.target.value.split(':').map(Number)
-            const n = new Date(value)
+            const n = value ? new Date(value) : new Date()
             n.setHours(H)
             n.setMinutes(m)
             onChange(n)
           }}
-          readOnly = {readOnly}
+          readOnly={readOnly}
         />
       </View>
     )
   }
   return (
-    <View style = {{ gap: 8 }}>
+    <View style={{ gap: 8 }}>
       <TextInput
-        value = {value ? ymd(value) : ''}
-        onChangeText = {(txt) => {
+        value={value ? ymd(value) : ''}
+        onChangeText={(txt) => {
           const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(txt)
           if (m) {
-            const n = new Date(value)
+            const n = value ? new Date(value) : new Date()
             n.setFullYear(Number(m[1]))
             n.setMonth(Number(m[2]) - 1)
             n.setDate(Number(m[3]))
@@ -149,7 +149,8 @@ function DateFieldStack({ value, onChange, readOnly = false }: { value: Date | n
         onChangeText={(txt) => {
           const m = /^(\d{2}):(\d{2})$/.exec(txt)
           if (m) {
-            const n = new Date(value)
+            // SỬA Ở ĐÂY
+            const n = value ? new Date(value) : new Date()
             n.setHours(Number(m[1]))
             n.setMinutes(Number(m[2]))
             onChange(n)
@@ -260,7 +261,7 @@ export default function AdminDashboard() {
   
         // Map API -> UI format
         const mapped = initLines.map((ln) => {
-          const found = apiLines.find((x) => x.lineId === ln.id);
+          const found = apiLines.find((x: any) => x.lineId === ln.id);
   
           if (!found) return ln;
   
