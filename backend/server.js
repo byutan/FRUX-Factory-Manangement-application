@@ -7,6 +7,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const lineState = {
+  'A': { activeProduct: null, autoCount: 0, isPaused: false },
+  'B': { activeProduct: null, autoCount: 0, isPaused: false },
+  'C': { activeProduct: null, autoCount: 0, isPaused: false },
+  'D': { activeProduct: null, autoCount: 0, isPaused: false },
+  'E': { activeProduct: null, autoCount: 0, isPaused: false },
+  'F': { activeProduct: null, autoCount: 0, isPaused: false }
+};
+
 const inMemoryAutoCounts = {
   'A': 0, 'B': 0, 'C': 0, 'D': 0, 'E': 0, 'F': 0
 };
@@ -371,25 +380,28 @@ app.get("/staff/lines/:line/current", async (req, res) => {
   }
 
   const t = rows[0];
+  const lineId = line.charAt(0); 
+  const state = lineState[lineId];
+
+  const isActiveProduct = (state.activeProduct === t.商品名);
+  const isLineBusy = (state.activeProduct !== null);
+
+  let autoCount = t.自動数 || 0;
+  let status = "pending";
+  let displayPaused = false;
+
+  if (isActiveProduct) {
+    autoCount = state.autoCount; 
+    displayPaused = state.isPaused;
+    status = state.isPaused ? "paused" : "active";
+  } else if (t.終了時刻) {
+    status = "done";
+  }
 
   const totalTarget = t.合計数 || 0;
   const produced = t.生産数 || 0;
-  const remaining = typeof t.残数 === "number" ? t.残数 : Math.max(totalTarget - produced, 0);
-  const progressPct = typeof t.生産進捗率 === 'number' ? t.生産進捗率 :totalTarget > 0 ? Math.floor((produced / totalTarget) * 100) : 0;
-  const lineId = line.charAt(0); 
-  
-  // Ưu tiên lấy từ RAM, nếu RAM bị 0 (mới khởi động) thì lấy từ DB
-  const autoCount = inMemoryAutoCounts[lineId] || t.自動数 || 0;
-
-  const plannedStartTime = formatTimeField(t.予定開始時刻);
-  const plannedEndTime = formatTimeField(t.予定終了時刻);
-  const plannedPassTime = formatTimeField(t.予定通過時刻);
-  const expectedFinishTime = formatTimeField(t.終了見込時刻)
-
-  let status = "in_progress";
-  if (t.更新回避) status = "paused";
-  if (t.終了時刻) status = 'done';
-  if (remaining <= 0) status = "done";
+  const remaining = Math.max(totalTarget - autoCount, 0); 
+  const progressPct = totalTarget > 0 ? Math.floor((autoCount / totalTarget) * 100) : 0;
 
   res.json({
     lineName: line,
@@ -399,11 +411,12 @@ app.get("/staff/lines/:line/current", async (req, res) => {
     autoCount,
     remaining,
     progressPct,
-    plannedStartTime,
-    plannedEndTime,
-    plannedPassTime,
-    expectedFinishTime,
+    plannedStartTime: formatTimeField(t.予定開始時刻),
+    plannedEndTime: formatTimeField(t.予定終了時刻),
     status,
+    isActive: isActiveProduct,
+    isLineBusy: isLineBusy,  
+    isPaused: displayPaused,
     now: new Date().toISOString()
   });
 });
@@ -424,267 +437,83 @@ app.post("/staff/lines/:line/planned-finish", async (req,res) => {
   res.json({ok:true});
 });
 
+app.post("/staff/lines/:line/actions/:type", async (req, res, next) => {
+  try {
+    const type = req.params.type;
+    const lineId = req.params.line.charAt(0);
+    const product = req.body?.product ? String(req.body.product) : null;
+    const state = lineState[lineId];
+
+    console.log(`[ACTION - ${type.toUpperCase()}] ライン: ${lineId} | 商品名: ${product}`);
+
+    if (type === "start") {
+      if (state.activeProduct !== null && state.activeProduct !== product) {
+        return res.status(400).json({ message: `商品[${state.activeProduct}]を使っているので、終了してください` });
+      }
+      state.activeProduct = product; 
+      state.autoCount = 0;           
+      state.isPaused = false;
+    } 
+    else if (type === "pause") { 
+      if (state.activeProduct === product) state.isPaused = true;
+    } 
+    else if (type === "resume") { 
+      if (state.activeProduct === product) state.isPaused = false;
+    } 
+    else if (type === "finish") { 
+      if (state.activeProduct === product) {
+        state.activeProduct = null;
+        state.isPaused = false;
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
 
 app.post("/staff/lines/:line/counters/manual", async (req, res, next) => {
-  try 
-  {
+  try {
     const delta = Number(req.body?.delta || 0);
     const product = req.body?.product ? String(req.body.product) : null;
-    const now = new Date();
+    const line = req.params.line;
+    const lineId = line.charAt(0);
 
     if (!delta || !product) {
       return res.json({ ok: true });
     }
 
-    const line = req.params.line;
-    const table = getLineTable(line);
-    let historyPayload = null;
+    const state = localTasksState[lineId];
 
-    await withTx(async (conn) => {
-      const [rows] = await conn.query(
-        `SELECT
-           商品コード,
-           商品名,
-           合計数,
-           生産数,
-           更新回避,
-           生産開始日,
-           予定開始時刻,
-           生産終了日,
-           予定終了時刻,
-           開始時刻,
-           終了時刻,
-           休憩min
-         FROM ${table}
-         WHERE 商品名 = ?
-         ORDER BY 商品コード DESC
-         LIMIT 1 FOR UPDATE`,
-        [product]
-      );
-
-      if (!rows.length) {
-        return;
-      }
-
-      const t = rows[0];
-
-      const plannedStart = buildDateTime(t.生産開始日, t.予定開始時刻);
-      const plannedEnd = buildDateTime(t.生産終了日, t.予定終了時刻);
-
-      if (t.終了時刻) 
-      {
-        const err = new Error("finished");
-        err.status = 409;
-        err.payload = { message: "finished" };
-        throw err;
-      }
-
-      if (t.更新回避) 
-      {
-        const err = new Error("paused");
-        err.status = 409;
-        err.payload = { message: "paused" };
-        throw err;
-      }
-
-      const total = t.合計数 || 0;
-      const currentProduced = t.生産数 || 0;
-
-      if (delta > 0 && currentProduced >= total) 
-      {
-        const err = new Error("finished");
-        err.status = 409;
-        err.payload = { message: "finished" };
-        throw err;
-      }
-
-      const np = Math.min(total, Math.max(0, currentProduced + delta));
-      const remaining = Math.max(total - np, 0);
-      const eventType = delta >= 0 ? "manual_inc" : "manual_dec";
-
-      const calc = computeProductionTimes({
-        plannedStart,
-        plannedEnd,
-        totalCount: total,
-        producedCount: np,
-        breakMinutes: t.休憩min || 0,
-        now: new Date()
-      });
-
-      await conn.query(
-        `UPDATE ${table}
-           SET 生産数 = ?,
-               生産時間_min単位 = ?,
-               生産性セットmin = ?,
-               準備セット数min = ?,
-               予定通過時刻 = ?,
-               終了見込時刻 = ?,
-               カウント数 = カウント数 + ?,
-               打刻記録 = ?
-         WHERE 商品コード = ?`,
-        [
-          np,
-          calc.netPlannedMinutes,
-          calc.minutesPerSetPlan,
-          calc.minutesPerTenSetsPlan,
-          calc.plannedPassAt,
-          calc.expectedFinishAt,
-          delta,
-          now,
-          t.商品コード
-        ]
-      );
-
-      historyPayload = {
-        taskId: t.商品コード,
-        line,
-        plannedPassAt: calc.plannedPassAt,
-        produced: np,
-        remaining,
-        eventType,
-        delta,
-        timestamp: now,
-      };
-    });
-
-    if (historyPayload) 
-    {
-      try 
-      {
-        await db.query(
-          `INSERT INTO カウント履歴
-             (タスクID, ライン名, 通過時刻, 予定通過時刻, 生産数, 残数, イベント種別, 差分)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            historyPayload.taskId,
-            historyPayload.line,
-            historyPayload.timestamp,
-            historyPayload.plannedPassAt,
-            historyPayload.produced,
-            historyPayload.remaining,
-            historyPayload.eventType,
-            historyPayload.delta
-          ]
-        );
-      } 
-      catch (err) 
-      {
-        console.error("Insert カウント履歴 failed:", err);
-      }
+    // Chặn update nếu Shuryou 
+    if (state.finished || state.product !== product) {
+      return res.status(409).json({ message: "finished" });
     }
 
+    // Chặn update nếu Chuudan 
+    if (state.paused) {
+      return res.status(409).json({ message: "paused" });
+    }
+
+    // Cập nhật RAM Local
+    state.produced += delta;
+    if (state.produced < 0) state.produced = 0;
+
     res.json({ ok: true, now: new Date().toISOString() });
-  } 
-  catch (e) 
-  {
-    if (e.status) return res.status(e.status).json(e.payload);
-    console.error(e);
+  } catch (e) {
     next(e);
   }
 });
 
-
-
-app.post("/staff/lines/:line/actions/:type", async (req, res, next) => {
-  try 
-  {
-    const type = req.params.type;
-    const now = new Date();
-    const col =
-      type === "start" ? "開始時刻" :
-      type === "pause" ? "中断時刻" :
-      type === "resume" ? "再開時刻" :
-      type === "finish" ? "終了時刻" : null;
-
-    if (!col) 
-      return res.status(400).json({ message: "bad type" });
-
-    const line = req.params.line;
-    const product = req.body?.product ? String(req.body.product) : null;
-    const table = getLineTable(line);
-
-    let hasRow = false;
-
-    await withTx(async (conn) => {
-      const [rows] = await conn.query(
-        `SELECT
-           商品コード,
-           商品名,
-           合計数,
-           生産数,
-           更新回避
-         FROM ${table}
-         WHERE 商品名 = ?
-         ORDER BY 商品コード DESC
-         LIMIT 1 FOR UPDATE`,
-        [product]
-      );
-
-      if (!rows.length) return;
-
-      hasRow = true;
-      const t = rows[0];
-
-      if (type === "start") 
-      {
-        await conn.query(
-          `UPDATE ${table}
-             SET 生産数 = 0,
-                 カウント数 = 0,
-                 更新回避 = FALSE,
-                 開始時刻 = ?,
-                 中断時刻 = NULL,
-                 再開時刻 = NULL,
-                 終了時刻 = NULL
-           WHERE 商品コード = ?`,
-          [now, t.商品コード]
-        );
-      } 
-      else if (type === "pause") 
-      {
-        await conn.query(
-          `UPDATE ${table}
-             SET 更新回避 = TRUE,
-                 中断時刻 = ?
-           WHERE 商品コード = ?`,
-          [now, t.商品コード]
-        );
-      } 
-      else if (type === "resume") 
-      {
-        await conn.query(
-          `UPDATE ${table}
-             SET 更新回避 = FALSE,
-                 再開時刻 = ?
-           WHERE 商品コード = ?`,
-          [now, t.商品コード]
-        );
-      } 
-      else if (type === "finish") 
-      {
-        await conn.query(
-          `UPDATE ${table}
-             SET 終了時刻 = ?,
-                 自動数 = 0
-           WHERE 商品コード = ?`,
-          [now, t.商品コード]
-        );
-      }
-
-      const producedForHistory = type === "start" ? 0 : (t.生産数 || 0);
-
-      await conn.query(
-        `INSERT INTO カウント履歴
-           (タスクID, ライン名, ${col}, 生産数, 残数, イベント種別)
-         VALUES (?, ?, ?, ?, GREATEST(? - ?, 0), ?)`,
-        [t.商品コード, line, now,  producedForHistory, t.合計数 || 0, producedForHistory, type]
-      );
-    });
-
-    res.json({ ok: true, now: new Date().toISOString(), noop: !hasRow });
-  } catch (e) {
-    next(e);
-  }
+app.get("/api/camera/status/:line", (req, res) => {
+  const lineId = req.params.line.charAt(0);
+  const state = lineState[lineId];
+  res.json({
+    product: state.activeProduct, 
+    paused: state.isPaused,
+    finished: (state.activeProduct === null) 
+  });
 });
 
 
@@ -742,21 +571,15 @@ app.get("/staff/lines/:line/counter-history", async (req, res, next) => {
 });
 
 app.post('/auto_count', async (req, res) => {
-  try 
-  {
-    const { line, total_count } = req.body;
-    if (!line || !total_count) return res.status(400).json({message: 'Invalid payload'});
+  const { line, total_count } = req.body;
+  if (!line || total_count === undefined) return res.status(400).json({message: 'Invalid'});
 
-    inMemoryAutoCounts[line] = total_count;
-    console.log(`[Realtime] Line ${line} autoCount update: ${total_count}`);
-
-    return res.json({ok: true, autoCount: total_count});
-  } 
-  catch (err)
-  {
-    console.error(err);
-    return res.status(500).json({message: 'server error'});
+  const state = lineState[line];
+  
+  if (state.activeProduct && !state.isPaused) {
+    state.autoCount = total_count;
   }
+  return res.json({ok: true});
 });
 
 // For package process
